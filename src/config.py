@@ -59,16 +59,40 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 # ── LLM Backend ────────────────────────────────────────────────────
 # OpenAI-compatible API.  Model name is NOT sent to the server —
 # the backend (llama.cpp / vLLM / etc.) uses whatever is loaded.
-# We keep it for logging only; pass MODEL_NAME="" to suppress entirely.
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://192.168.0.58:1234/v1")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "123")
-MODEL_NAME = os.getenv("LLM_MODEL_NAME", "")
 CTX_SIZE = int(os.getenv("LLM_CTX_SIZE", "32768"))
 
-# Vision support — auto-detected from MODEL_NAME if not explicitly set.
-# Only Qwen models accept image inputs; DeepSeek-V4 and others don't.
-# Set LLM_VISION_ENABLED=true to force on, false to force off.
-# Leave unset and we'll check if "qwen" appears in MODEL_NAME.
+# ── Model Auto-Detection ────────────────────────────────────────
+# The bot queries the LLM backend's /models endpoint at startup to
+# discover which model is currently loaded — no need to manually set
+# LLM_MODEL_NAME when switching between DeepSeek-V4 and Qwen.
+# If the endpoint is unreachable or the env var is set, uses that.
+def _detect_model():
+    try:
+        import httpx
+        base = LLM_BASE_URL.rstrip("/v1").rstrip("/")
+        for path in ("/v1/models", "/models"):
+            try:
+                resp = httpx.get(f"{base}{path}", timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models = data.get("data", [])
+                    if models and isinstance(models, list):
+                        name = models[0].get("id", "")
+                        if name:
+                            logger.info("Auto-detected model: %s", name)
+                            return name
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return ""
+
+MODEL_NAME = os.getenv("LLM_MODEL_NAME", "") or _detect_model()
+
+# Vision: auto-detected from MODEL_NAME (qwen→on, others→off).
+# Set LLM_VISION_ENABLED=true/false to override.
 _vision_env = os.getenv("LLM_VISION_ENABLED", "").lower()
 if _vision_env == "true":
     LLM_VISION_ENABLED = True
@@ -76,6 +100,9 @@ elif _vision_env == "false":
     LLM_VISION_ENABLED = False
 else:
     LLM_VISION_ENABLED = "qwen" in MODEL_NAME.lower()
+
+if MODEL_NAME:
+    logger.info("Model: %s | Vision: %s", MODEL_NAME, LLM_VISION_ENABLED)
 
 # ── Tavily Search API ──────────────────────────────────────────────
 # Sign up at https://tavily.com — free tier includes 1,000 searches/month.

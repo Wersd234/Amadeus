@@ -60,40 +60,84 @@ else:
 # Sign up at https://tavily.com — free tier includes 1,000 searches/month.
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
-# ── Free-Speaking Mode (群友自由发言) ──────────────────────────────
-# The bot monitors all messages and jumps into conversations like a real
-# group member.  Unlike keyword eavesdropping (which needs specific triggers),
-# free-speaking lets the bot join ANY active conversation naturally.
+# ── Free-Speaking: Interest-Driven Reply (兴趣驱动回复) ────────
+# The bot reads EVERY message and decides whether to reply based on
+# content relevance — not arbitrary message counts or cooldowns.
+# Like a real person: if the topic is interesting, jump in.
+# If it's boring small talk, stay silent.
 #
-# Design philosophy: message-gap-based, not time-based.
-# A real person doesn't wait 8 minutes between messages — they read a few
-# messages, then reply.  So the bot:
-#   - Rolls a probability check on EVERY message (not just at thresholds)
-#   - After speaking, waits at least N messages before speaking again
-#   - Once engaged (spoke recently), becomes more likely to keep talking
-#   - Has a short absolute cooldown as an anti-spam safety net
+# Categories are checked in order (first match wins).  Each category
+# has keyword lists and a reply probability.  A single message can
+# only trigger ONE category.
+#
+# DM channels use stricter rules: only direct questions and science
+# topics trigger replies.  Groups are more relaxed.
 
-# Per-message probability of chiming in (0.0–1.0).  Set to 0 to disable.
-FREE_SPEAK_PROB = 0.06
+# Interest categories: (label, keywords, prob_group, prob_dm)
+# prob_group = probability in group channels
+# prob_dm    = probability in DM channels (usually much lower)
+FREE_SPEAK_INTERESTS = [
+    # ── Always-engage (high priority) ──
+    ("question", [
+        # Matches messages that ask the group a question
+        "?", "？", "吗", "呢", "what", "how", "why", "who", "when",
+        "有人知道", "谁知道", "请问", "anyone", "does anyone",
+        "怎么", "哪里", "哪", "是不是", "能不能", "can you", "could you",
+    ], 0.40, 0.30),
 
-# After the bot speaks, it must see at least this many messages before
-# speaking again — like a person reading before responding.
-FREE_SPEAK_MIN_GAP_MSGS = 4
+    # ── Science & tech (core identity) ──
+    ("science", [
+        "科学", "研究", "论文", "实验", "量子", "物理", "数学",
+        "science", "research", "paper", "experiment", "quantum", "physics", "math",
+        "AI", "人工智能", "代码", "code", "程序", "编程", "algorithm", "算法",
+        "神经", "neural", "brain", "大脑", "psychology", "心理",
+        "university", "大学", "uni", "PhD", "博士", "academic", "学术",
+    ], 0.30, 0.25),
 
-# If the bot spoke within this many messages, it's "engaged" and uses
-# a higher probability to keep the conversation flowing naturally.
-FREE_SPEAK_ACTIVE_WINDOW_MSGS = 12
+    # ── Melbourne life (local relevance) ──
+    ("melbourne", [
+        "melbourne", "墨尔本", "melb", "CBD", "city", "flinders",
+        "train", "tram", "bus", "火车", "电车", "公交", "ptv", "myki",
+        "晚点", "delay", "delay", "cancel", "取消",
+        "clayton", "caulfield", "south yarra", "richmond",
+        "weather", "天气", "rain", "下雨", "cold", "冷", "hot", "热",
+        "维妈", "Queen Vic", "图书馆", "library",
+    ], 0.25, 0.15),
 
-# Higher probability when the bot is already engaged in conversation.
-FREE_SPEAK_PROB_ACTIVE = 0.14
+    # ── Food & drink ──
+    ("food", [
+        "dr pepper", "dr. pepper", "dr.pepper", "胡椒博士",
+        "coffee", "咖啡", "latte", "flat white", "cappuccino",
+        "bubble tea", "奶茶", "好吃", "yum", "food", "吃", "喝",
+        "餐厅", "restaurant", "brunch", "晚饭", "午饭", "dinner", "lunch",
+    ], 0.22, 0.10),
 
-# Absolute minimum seconds between any two bot messages (anti-spam safety).
-# Unlike the old 8-minute cooldown, this is just a short guardrail.
-FREE_SPEAK_COOLDOWN_SEC = 20
+    # ── Gaming / anime / otaku culture ──
+    ("otaku", [
+        "anime", "动漫", "游戏", "game", "gaming", "steam",
+        "steins gate", "命运石之门", "石头门", "sg0",
+        "genshin", "原神", "崩坏", "honkai", "star rail",
+        "league", "lol", "valorant", "apex", "elden ring",
+        "switch", "ps5", "nintendo", "manga", "漫画",
+        "cosplay", "漫展", "convention",
+    ], 0.25, 0.12),
 
-# Minimum total messages the bot must have seen in a channel before its
-# first free-speaking interjection (prevents jumping in cold after restart).
-FREE_SPEAK_WARMUP_MSGS = 20
+    # ── Strong emotion / venting ──
+    ("emotion", [
+        "！！", "？！", "...", "……",
+        "卧槽", "我靠", "救命", "啊啊啊", "呜呜", "T.T", "T_T", "orz",
+        "fuck", "shit", "damn", "omg", "bruh",
+        "气死", "烦死", "笑死", "哭了", "崩溃", "无语",
+        "好累", "好困", "好烦", "好爽", "太棒了", "绝了",
+    ], 0.28, 0.15),
+]
+
+# Absolute minimum seconds between any two free-speaking replies.
+# Safety net only — the interest model is the real governor.
+FREE_SPEAK_COOLDOWN_SEC = 25
+
+# Do NOT reply to consecutive messages from the same user (avoid stalker vibe).
+FREE_SPEAK_SAME_USER_COOLDOWN = True
 
 HISTORY_MAXLEN = 20
 MAX_REPLY_TOKENS = 1024

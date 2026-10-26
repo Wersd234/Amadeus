@@ -35,9 +35,8 @@ from config import (
     KEYWORD_TRIGGERS, KEYWORD_COOLDOWN_SEC, EMOTION_EMOJIS,
     CHANNEL_SLIP_PROB, CHANNEL_SLIP_START_HOUR, CHANNEL_SLIP_END_HOUR,
     PTV_SUB_CHECK_INTERVAL_MIN, PTV_SUB_LOOKAHEAD_MIN,
-    FREE_SPEAK_PROB, FREE_SPEAK_MIN_GAP_MSGS,
-    FREE_SPEAK_ACTIVE_WINDOW_MSGS, FREE_SPEAK_PROB_ACTIVE,
-    FREE_SPEAK_COOLDOWN_SEC, FREE_SPEAK_WARMUP_MSGS,
+    FREE_SPEAK_INTERESTS, FREE_SPEAK_COOLDOWN_SEC,
+    FREE_SPEAK_SAME_USER_COOLDOWN,
     LLM_VISION_ENABLED,
     TAVILY_API_KEY,
 )
@@ -90,8 +89,8 @@ class AmadeusBot(discord.Client):
         # Free-speaking cooldown per channel
         self._last_free_speak: dict[str, float] = {}
 
-        # Track which message number the bot last spoke at (for message-gap logic)
-        self._last_free_speak_msg: dict[str, int] = {}
+        # Track last author the bot replied to (prevent replying to same user twice)
+        self._last_free_speak_author: dict[str, str] = {}
 
         # Convergence announcement guards
         self._convergence_announced_start: bool = False
@@ -299,7 +298,7 @@ class AmadeusBot(discord.Client):
                 self._last_keyword_interject[channel_id] = now_ts
             else:
                 # Check free-speaking trigger
-                is_free_speak = self._should_free_speak(channel_id, now_ts)
+                is_free_speak = self._should_free_speak(channel_id, now_ts, content, user_id, not message.guild)
 
             if not is_keyword and not is_free_speak:
                 return  # Nothing triggered — stay silent
@@ -401,7 +400,6 @@ class AmadeusBot(discord.Client):
                         f"Recent messages:\n{rc}]"
                     )
                 self._last_free_speak[channel_id] = now_ts
-                self._last_free_speak_msg[channel_id] = self.msg_seen.get(channel_id, 0)
 
             # Dynamic injects
             injects = self._build_dynamic_injects(lang, wl)
@@ -506,44 +504,40 @@ class AmadeusBot(discord.Client):
 
     # ── Free-Speaking Logic ─────────────────────────────────────
 
-    def _should_free_speak(self, channel_id: str, now_ts: float) -> bool:
+    def _should_free_speak(self, channel_id: str, now_ts: float, content: str, author_id: str, is_dm: bool) -> bool:
         """
-        Decide whether the bot should spontaneously join the conversation.
+        Interest-driven reply decision.
 
-        Uses message-gap logic (not time-interval logic):
-          1. Warmup: at least FREE_SPEAK_WARMUP_MSGS seen in this channel
-          2. Gap: at least FREE_SPEAK_MIN_GAP_MSGS since the bot last spoke
-          3. Cooldown: at least FREE_SPEAK_COOLDOWN_SEC since last message (safety net)
-          4. Probability: base prob or higher "active" prob if recently engaged
+        Scans message content against interest categories.  If the topic
+        is something the bot cares about and probability passes → reply.
+        If nothing interesting → stay silent.
 
-        This is checked on EVERY message (not just at thresholds), so the
-        bot can jump in at any natural point.
+        DM channels use stricter probabilities (the bot should reply less
+        in 1-on-1 since every message is implicitly directed at it).
         """
-        if FREE_SPEAK_PROB <= 0:
-            return False
-
-        seen = self.msg_seen.get(channel_id, 0)
-        if seen < FREE_SPEAK_WARMUP_MSGS:
-            return False
-
-        # Anti-spam: absolute minimum seconds between any two messages
+        # Safety net: absolute minimum seconds between any two messages
         last_any = self._last_free_speak.get(channel_id, 0)
         if now_ts - last_any < FREE_SPEAK_COOLDOWN_SEC:
             return False
 
-        # Message-gap: must have seen enough messages since last speaking
-        # Track which message number the bot last spoke at
-        last_msg_num = self._last_free_speak_msg.get(channel_id, -999)
-        if seen - last_msg_num < FREE_SPEAK_MIN_GAP_MSGS:
-            return False
+        # Don't reply to the same user twice in a row (avoids stalker vibe)
+        if FREE_SPEAK_SAME_USER_COOLDOWN:
+            last_author = self._last_free_speak_author.get(channel_id)
+            if last_author == author_id:
+                return False
 
-        # Choose probability: higher if bot is "engaged" (spoke recently)
-        if seen - last_msg_num <= FREE_SPEAK_ACTIVE_WINDOW_MSGS:
-            prob = FREE_SPEAK_PROB_ACTIVE
-        else:
-            prob = FREE_SPEAK_PROB
+        content_lower = content.lower()
 
-        return random.random() < prob
+        for _label, keywords, prob_group, prob_dm in FREE_SPEAK_INTERESTS:
+            for kw in keywords:
+                if kw.lower() in content_lower:
+                    prob = prob_dm if is_dm else prob_group
+                    if random.random() < prob:
+                        self._last_free_speak_author[channel_id] = author_id
+                        return True
+                    return False  # Matched a category but roll failed — don't check others
+
+        return False  # Nothing interesting
 
 
 # ═══════════════════════════════════════════════════════════════════

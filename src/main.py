@@ -87,7 +87,7 @@ class AmadeusBot(discord.Client):
 
         # Per-channel: recent messages seen by the bot (for free-speaking context)
         # Format: [{"author": "Name", "content": "..."}, ...]
-        self.recent_messages: dict[str, deque] = deque
+        self.recent_messages: dict[str, deque] = {}
 
         # Per-channel: total message count (for free-speaking threshold)
         self.msg_seen: dict[str, int] = {}

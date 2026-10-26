@@ -21,6 +21,7 @@ import asyncio
 import base64
 import datetime
 import io
+import json
 import random
 import re
 from collections import deque
@@ -38,6 +39,7 @@ from config import (
     FREE_SPEAK_ACTIVE_WINDOW_MSGS, FREE_SPEAK_PROB_ACTIVE,
     FREE_SPEAK_COOLDOWN_SEC, FREE_SPEAK_WARMUP_MSGS,
     LLM_VISION_ENABLED,
+    TAVILY_API_KEY,
 )
 from utils import (
     run_startup_check, get_server_language,
@@ -444,6 +446,38 @@ class AmadeusBot(discord.Client):
 
             emotion = llm_resp.get("emotion", "other")
             reply_text = llm_resp.get("reply", "...")
+
+            # ── Tavily search loop ──────────────────────────────
+            # The LLM may request a web search by including "search_query".
+            # If so, run Tavily, feed results back, and get a final reply.
+            # Max 1 search per turn to prevent loops.
+            search_query = (llm_resp.get("search_query") or "").strip()
+            if search_query and TAVILY_API_KEY and TAVILY_API_KEY != "your_tavily_api_key_here":
+                try:
+                    from tavily import TavilyClient
+                    client = TavilyClient(api_key=TAVILY_API_KEY)
+                    results = client.search(query=search_query, search_depth="basic", max_results=3)
+                    answer = results.get("answer", "")
+                    sources = results.get("results", [])
+
+                    # Format results as a compact text block for the LLM
+                    result_text = f"Tavily search results for '{search_query}':\n"
+                    if answer:
+                        result_text += f"Summary: {answer[:500]}\n\n"
+                    for i, s in enumerate(sources[:3], 1):
+                        result_text += f"{i}. {s.get('title','?')}: {s.get('content','')[:300]}\n"
+
+                    # Feed results back to LLM for final reply
+                    messages.append({"role": "assistant", "content": json.dumps(llm_resp, ensure_ascii=False)})
+                    messages.append({"role": "user", "content": result_text})
+
+                    llm_resp2 = await generate_reply(messages)
+                    if llm_resp2 and llm_resp2.get("reply") and llm_resp2["reply"] != "__VISION_UNAVAILABLE__":
+                        emotion = llm_resp2.get("emotion", emotion)
+                        reply_text = llm_resp2.get("reply", reply_text)
+                    logger.info("🔍 Tavily search: '%s' → used in reply", search_query)
+                except Exception as e:
+                    logger.error("Tavily search in-chat failed: %s", e)
 
             # ── Update history ──────────────────────────────────
             self.history[channel_id].append({

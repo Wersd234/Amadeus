@@ -31,6 +31,25 @@ AFFINITY_FILE = os.path.join(DATA_DIR, "affinity.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "memory.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "server_settings.json")
 PTV_SUBSCRIPTIONS_FILE = os.path.join(DATA_DIR, "ptv_subscriptions.json")
+IMAGE_INDEX_FILE = os.path.join(DATA_DIR, "image_index.json")
+
+# ── Character Image (立绘) ─────────────────────────────────────
+# Sprite image directory — organised by outfit subdirectories.
+# CSV index file maps each sprite to emotion/outfit metadata.
+CHARACTER_IMAGE_DIR = os.path.join(PROJECT_ROOT, "resource", "kurisu")
+IMAGE_CSV_PATH = os.path.join(PROJECT_ROOT, "resource", "分类结果清单.csv")
+
+# Map LLM emotion tags → CSV emotion names.
+# Each LLM tag can match multiple CSV emotions; one is picked at random
+# for variety when the same emotion is triggered repeatedly.
+EMOTION_IMAGE_MAP = {
+    "happy":     ["01-平静自然", "02-微笑", "06-开心"],
+    "angry":     ["04-生气", "05-苦恼不快"],
+    "sad":       ["05-苦恼不快", "07-悲伤"],
+    "surprised": ["08-惊讶", "09-慌张"],
+    "other":     ["01-平静自然", "10-思考"],
+}
+
 
 # ── Discord ────────────────────────────────────────────────────────
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")

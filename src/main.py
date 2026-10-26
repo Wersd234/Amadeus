@@ -43,6 +43,7 @@ from config import (
 )
 from utils import (
     run_startup_check, get_server_language,
+    get_art_channel,
     load_memory, save_memory,
     get_affinity, increment_affinity, get_affinity_tier,
     get_broadcast_channel,
@@ -58,6 +59,7 @@ from worldline import (
 )
 from prompts import build_system_prompt
 from llm_api import generate_reply, vision_available, summarize_memory
+from image_index import load_index, get_image_for_emotion
 from ptv_api import get_departures
 from commands import setup_commands
 
@@ -114,6 +116,12 @@ class AmadeusBot(discord.Client):
                     "ON" if LLM_VISION_ENABLED else "OFF", FREE_SPEAK_PROB * 100)
 
     async def on_ready(self):
+        # Pre-load image index (non-fatal if missing)
+        try:
+            self.image_index = load_index()
+        except Exception:
+            self.image_index = {}
+
         wl = get_worldline()
         logger.info(
             "✅ Amadeus '%s' Online | WL: %s (%s) SG=%s Conv=%s",
@@ -501,7 +509,15 @@ class AmadeusBot(discord.Client):
                 )
 
             # ── Reply ────────────────────────────────────────────
-            await message.reply(content=reply_text)
+            # Attach character sprite if this is the designated art channel
+            image_path = None
+            if message.guild and channel_id == get_art_channel(str(message.guild.id)):
+                image_path = get_image_for_emotion(emotion, self.image_index)
+
+            if image_path and os.path.exists(image_path):
+                await message.reply(content=reply_text, file=discord.File(image_path))
+            else:
+                await message.reply(content=reply_text)
             # Track for conversation continuity (per-user)
             self._last_reply_to.setdefault(channel_id, {})[user_id] = datetime.datetime.now().timestamp()
 

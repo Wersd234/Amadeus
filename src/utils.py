@@ -75,6 +75,28 @@ def save_broadcast_channel(guild_id: str, channel_id: str) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Art Channel (立绘频道)
+# ═══════════════════════════════════════════════════════════════════
+
+def get_art_channel(guild_id: str):
+    """Return the channel ID where images are enabled, or None."""
+    settings = _load_json(SETTINGS_FILE)
+    return settings.get(f"{guild_id}_art_channel")
+
+
+def save_art_channel(guild_id: str, channel_id: str) -> None:
+    settings = _load_json(SETTINGS_FILE)
+    settings[f"{guild_id}_art_channel"] = channel_id
+    _save_json_atomic(SETTINGS_FILE, settings)
+
+
+def clear_art_channel(guild_id: str) -> None:
+    settings = _load_json(SETTINGS_FILE)
+    settings.pop(f"{guild_id}_art_channel", None)
+    _save_json_atomic(SETTINGS_FILE, settings)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Long-Term Memory (per channel)
 # ═══════════════════════════════════════════════════════════════════
 

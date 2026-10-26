@@ -22,6 +22,7 @@ from utils import (
     get_affinity, increment_affinity, get_affinity_tier,
     get_broadcast_channel, save_broadcast_channel,
     add_ptv_subscription, remove_ptv_subscription, get_user_subscriptions,
+    get_art_channel, save_art_channel, clear_art_channel,
 )
 from worldline import (
     get_worldline, try_dmail_shift, get_dmail_response, get_mode_description,
@@ -602,6 +603,38 @@ def setup_commands(bot) -> None:
         await interaction.response.send_message(embed=embed)
 
     # ═════════════════════════════════════════════════════════════
+    # /art_channel
+    # ═════════════════════════════════════════════════════════════
+    @bot.tree.command(
+        name="art_channel",
+        description="[Admin] Set the channel where Kurisu's sprite appears with replies (设置立绘频道)",
+    )
+    @app_commands.describe(channel="Channel to enable images in — leave empty to disable (选择频道，留空则关闭)")
+    async def slash_art_channel(interaction: discord.Interaction, channel: discord.TextChannel = None):
+        guild_id = str(interaction.guild_id) if interaction.guild_id else str(interaction.user.id)
+        lang = get_server_language(guild_id)
+
+        if not interaction.user.guild_permissions.administrator:
+            if lang == "zh":
+                await interaction.response.send_message("🚫 仅管理员可设置立绘频道。", ephemeral=True)
+            else:
+                await interaction.response.send_message("🚫 Admin only.", ephemeral=True)
+            return
+
+        if channel is None:
+            clear_art_channel(guild_id)
+            if lang == "zh":
+                await interaction.response.send_message("🖼️ 立绘功能已关闭——所有频道恢复纯文字模式。")
+            else:
+                await interaction.response.send_message("🖼️ Art disabled — all channels back to text-only.")
+        else:
+            save_art_channel(guild_id, str(channel.id))
+            if lang == "zh":
+                await interaction.response.send_message(f"🖼️ 立绘已绑定到 {channel.mention}！在该频道的回复会附带红莉栖的表情立绘。")
+            else:
+                await interaction.response.send_message(f"🖼️ Art enabled in {channel.mention}! Kurisu's sprites will appear with replies there.")
+
+    # ═════════════════════════════════════════════════════════════
     # /set_broadcast
     # ═════════════════════════════════════════════════════════════
     @bot.tree.command(
@@ -749,4 +782,4 @@ def setup_commands(bot) -> None:
 
         await interaction.response.send_message(embed=embed)
 
-    logger.info("Slash commands registered: language, worldline, worldline_history, dmail, ptv_next, ptv_status, ptv_subscribe, ptv_unsubscribe, ptv_subscriptions, lab_fortune, affinity, search, set_broadcast, help")
+    logger.info("Slash commands registered: language, worldline, worldline_history, dmail, ptv_next, ptv_status, ptv_subscribe, ptv_unsubscribe, ptv_subscriptions, lab_fortune, affinity, search, art_channel, set_broadcast, help")

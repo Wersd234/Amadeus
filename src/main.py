@@ -31,7 +31,7 @@ from discord.ext import tasks
 from PIL import Image
 
 from config import (
-    logger, DISCORD_TOKEN, HISTORY_MAXLEN,
+    logger, DISCORD_TOKEN, refresh_model, HISTORY_MAXLEN,
     KEYWORD_TRIGGERS, KEYWORD_COOLDOWN_SEC, EMOTION_EMOJIS,
     CHANNEL_SLIP_PROB, CHANNEL_SLIP_START_HOUR, CHANNEL_SLIP_END_HOUR,
     PTV_SUB_CHECK_INTERVAL_MIN, PTV_SUB_LOOKAHEAD_MIN,
@@ -133,6 +133,7 @@ class AmadeusBot(discord.Client):
 
     @tasks.loop(minutes=10)
     async def dynamic_presence(self):
+        refresh_model()  # Re-detect LLM model (mid-session switch)
         wl = get_worldline()
         icons = {"beta": "🌏", "alpha": "🛡️", "special": "⚠️"}
         icon = icons.get(wl["mode"], "🌏")

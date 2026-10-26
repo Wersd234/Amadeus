@@ -104,6 +104,84 @@ else:
 if MODEL_NAME:
     logger.info("Model: %s | Vision: %s", MODEL_NAME, LLM_VISION_ENABLED)
 
+
+def refresh_model():
+    """
+    Re-detect the loaded model from the backend.
+
+    Call this periodically (e.g. every 10 minutes) to catch mid-session
+    model switches without restarting the bot.
+
+    Returns True if the model or vision state changed.
+    """
+    global MODEL_NAME, LLM_VISION_ENABLED
+    detected = _detect_model()
+    if not detected:
+        return False  # Backend unreachable -- keep current state
+
+    old_name = MODEL_NAME
+    old_vision = LLM_VISION_ENABLED
+
+    # Env var still takes priority
+    env_name = os.getenv("LLM_MODEL_NAME", "")
+    MODEL_NAME = env_name or detected
+
+    _vision_env = os.getenv("LLM_VISION_ENABLED", "").lower()
+    if _vision_env == "true":
+        LLM_VISION_ENABLED = True
+    elif _vision_env == "false":
+        LLM_VISION_ENABLED = False
+    else:
+        LLM_VISION_ENABLED = "qwen" in MODEL_NAME.lower()
+
+    changed = (MODEL_NAME != old_name or LLM_VISION_ENABLED != old_vision)
+    if changed:
+        logger.info(
+            "Model changed: %s -> %s | Vision: %s -> %s",
+            old_name or "(none)", MODEL_NAME,
+            old_vision, LLM_VISION_ENABLED,
+        )
+    return changed
+
+
+def refresh_model() -> bool:
+    """
+    Re-detect the loaded model from the backend.
+
+    Call this periodically (e.g. every 10 minutes) to catch mid-session
+    model switches without restarting the bot.
+
+    Returns True if the model or vision state changed.
+    """
+    global MODEL_NAME, LLM_VISION_ENABLED
+    detected = _detect_model()
+    if not detected:
+        return False  # Backend unreachable — keep current state
+
+    old_name = MODEL_NAME
+    old_vision = LLM_VISION_ENABLED
+
+    # Env var still takes priority
+    env_name = os.getenv("LLM_MODEL_NAME", "")
+    MODEL_NAME = env_name or detected
+
+    _vision_env = os.getenv("LLM_VISION_ENABLED", "").lower()
+    if _vision_env == "true":
+        LLM_VISION_ENABLED = True
+    elif _vision_env == "false":
+        LLM_VISION_ENABLED = False
+    else:
+        LLM_VISION_ENABLED = "qwen" in MODEL_NAME.lower()
+
+    changed = (MODEL_NAME != old_name or LLM_VISION_ENABLED != old_vision)
+    if changed:
+        logger.info(
+            "Model changed: %s → %s | Vision: %s → %s",
+            old_name or "(none)", MODEL_NAME,
+            old_vision, LLM_VISION_ENABLED,
+        )
+    return changed
+
 # ── Tavily Search API ──────────────────────────────────────────────
 # Sign up at https://tavily.com — free tier includes 1,000 searches/month.
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")

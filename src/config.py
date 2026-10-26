@@ -43,8 +43,10 @@ IMAGE_CSV_PATH = os.path.join(PROJECT_ROOT, "resource", "分类结果清单.csv"
 # Each LLM tag can match multiple CSV emotions; one is picked at random
 # for variety when the same emotion is triggered repeatedly.
 EMOTION_IMAGE_MAP = {
+    # LLM emotion → CSV 表情名称 (matched against 分类结果清单.csv)
+    # If a CSV emotion does not exist in the index, it is silently skipped.
     "happy":     ["01-平静自然", "02-微笑", "06-开心"],
-    "angry":     ["04-生气", "05-苦恼不快"],
+    "angry":     ["06-愤怒烦躁", "05-苦恼不快"],
     "sad":       ["05-苦恼不快", "07-悲伤"],
     "surprised": ["08-惊讶", "09-慌张"],
     "other":     ["01-平静自然", "10-思考"],

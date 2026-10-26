@@ -93,9 +93,10 @@ class AmadeusBot(discord.Client):
         # Track last author the bot replied to (prevent replying to same user twice)
         self._last_free_speak_author: dict[str, str] = {}
 
-        # Conversation continuity: (user_id, timestamp) of the last person
-        # the bot replied to.  Used to keep a thread alive.
-        self._last_reply_to: dict[str, tuple[str, float]] = {}
+        # Conversation continuity: per-user tracking.
+        # {channel_id: {user_id: timestamp}} — each user gets their own
+        # thread window, so replying to B doesn't kill A's thread.
+        self._last_reply_to: dict[str, dict[str, float]] = {}
 
         # Convergence announcement guards
         self._convergence_announced_start: bool = False
@@ -405,7 +406,7 @@ class AmadeusBot(discord.Client):
                         f"Recent messages:\n{rc}]"
                     )
                 self._last_free_speak[channel_id] = now_ts
-                self._last_reply_to[channel_id] = (user_id, now_ts)
+                self._last_reply_to.setdefault(channel_id, {})[user_id] = now_ts
 
             # Dynamic injects
             injects = self._build_dynamic_injects(lang, wl)
@@ -501,8 +502,8 @@ class AmadeusBot(discord.Client):
 
             # ── Reply ────────────────────────────────────────────
             await message.reply(content=reply_text)
-            # Track for conversation continuity
-            self._last_reply_to[channel_id] = (user_id, datetime.datetime.now().timestamp())
+            # Track for conversation continuity (per-user)
+            self._last_reply_to.setdefault(channel_id, {})[user_id] = datetime.datetime.now().timestamp()
 
             # Emoji reaction
             try:
@@ -547,21 +548,28 @@ class AmadeusBot(discord.Client):
                     return False  # Matched a category but roll failed — don't check others
 
         # ── Step 2: Conversation continuity ─────────────────────
-        # If the bot recently replied to this person, keep the thread alive
-        # even if the content doesn't match any interest category.
-        last_thread = self._last_reply_to.get(channel_id)
-        if last_thread:
-            thread_user, thread_ts = last_thread
-            if (thread_user == author_id and
-                now_ts - thread_ts < FREE_SPEAK_CONTINUATION_WINDOW_SEC):
-                if random.random() < FREE_SPEAK_CONTINUATION_PROB:
-                    self._last_free_speak_author[channel_id] = author_id
-                    return True
-                return False  # Continuation check failed — stay silent
+        # Check per-user: did the bot recently reply to THIS specific user?
+        # Each user has an independent thread window, so replying to B
+        # does not break A's conversation.
+        channel_threads = self._last_reply_to.get(channel_id, {})
+        thread_ts = channel_threads.get(author_id, 0)
+        if now_ts - thread_ts < FREE_SPEAK_CONTINUATION_WINDOW_SEC:
+            if random.random() < FREE_SPEAK_CONTINUATION_PROB:
+                self._last_free_speak_author[channel_id] = author_id
+                return True
+            return False  # Continuation check failed — stay silent
 
         # ── Step 3: Same-user guard (only if NOT a thread) ──────
         if FREE_SPEAK_SAME_USER_COOLDOWN and same_user:
             return False
+
+        # Periodically clean expired thread entries (once per ~50 messages)
+        if self.msg_seen.get(channel_id, 0) % 50 == 0:
+            cutoff = now_ts - FREE_SPEAK_CONTINUATION_WINDOW_SEC
+            channel_threads = self._last_reply_to.get(channel_id, {})
+            expired = [uid for uid, ts in channel_threads.items() if ts < cutoff]
+            for uid in expired:
+                del channel_threads[uid]
 
         return False  # Nothing interesting
 

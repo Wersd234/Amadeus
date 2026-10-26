@@ -139,6 +139,21 @@ class AmadeusBot(discord.Client):
             wl.get("is_steins_gate", False), wl.get("convergence_active", False),
         )
 
+        # Guild-scoped command sync = instant propagation (a few seconds).
+        # The global tree.sync() in setup_hook can take up to an hour to
+        # refresh EXISTING commands — which is exactly why changes like
+        # adding an autocomplete appear to "do nothing" after a deploy.
+        # Global sync still runs (for DM usage); guild sync makes it
+        # effective now in every server we're in.
+        synced = 0
+        for guild in self.guilds:
+            try:
+                await self.tree.sync(guild=guild)
+                synced += 1
+            except Exception as exc:
+                logger.warning("Guild command sync failed for %s: %s", guild.id, exc)
+        logger.info("Command tree instantly synced to %d guild(s).", synced)
+
     # ── Dynamic Presence ────────────────────────────────────────
 
     @tasks.loop(minutes=10)

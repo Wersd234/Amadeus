@@ -1,0 +1,14 @@
+# Discord bot framework with slash command support
+discord.py>=2.3.2
+
+# Environment variable loading from .env file
+python-dotenv>=1.0.0
+
+# OpenAI-compatible API client (for llama.cpp / LM Studio / OpenAI / DeepSeek)
+openai>=1.14.0
+
+# Async HTTP client for PTV API calls
+httpx>=0.27.0
+
+# Tavily web search API (AI-optimised search, 1,000 free searches/month)
+tavily-python>=0.5.0

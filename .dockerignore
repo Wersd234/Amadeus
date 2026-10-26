@@ -1,0 +1,17 @@
+# Never bake secrets into the image
+.env
+
+# Git metadata
+.git/
+.gitignore
+
+# Runtime data (mounted as volume)
+data/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+.vscode/

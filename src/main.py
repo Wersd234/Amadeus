@@ -41,7 +41,7 @@ except ImportError:
 
 from config import (
     logger, DISCORD_TOKEN, refresh_model, HISTORY_MAXLEN,
-    KEYWORD_TRIGGERS, KEYWORD_COOLDOWN_SEC, EMOTION_EMOJIS,
+    KEYWORD_TRIGGERS, KEYWORD_COOLDOWN_SEC,
     CHANNEL_SLIP_PROB, CHANNEL_SLIP_START_HOUR, CHANNEL_SLIP_END_HOUR,
     PTV_SUB_CHECK_INTERVAL_MIN, PTV_SUB_LOOKAHEAD_MIN,
     FREE_SPEAK_INTERESTS, FREE_SPEAK_COOLDOWN_SEC,
@@ -530,12 +530,6 @@ class AmadeusBot(discord.Client):
                 await message.reply(content=reply_text)
             # Track for conversation continuity (per-user)
             self._last_reply_to.setdefault(channel_id, {})[user_id] = datetime.datetime.now().timestamp()
-
-            # Emoji reaction
-            try:
-                await message.add_reaction(EMOTION_EMOJIS.get(str(emotion).lower(), "🍡"))
-            except discord.HTTPException:
-                pass
 
     # ── Free-Speaking Logic ─────────────────────────────────────
 

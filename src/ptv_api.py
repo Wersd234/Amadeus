@@ -16,6 +16,7 @@ responsible for formatting them into Discord embeds.
 import asyncio
 import hashlib
 import hmac
+import time
 import urllib.parse
 from datetime import datetime
 from typing import Optional
@@ -85,16 +86,29 @@ def _signed_url(path: str, query_params: dict | None = None) -> str:
 # API Calls
 # ═══════════════════════════════════════════════════════════════════
 
-async def _get_json(path: str, params: dict | None = None) -> dict | None:
+# Minimal TTL cache (ported from the reference client).  Autocomplete
+# callbacks fire on EVERY keystroke; without a 60 s cache on /search the
+# bot would trip PTV's undocumented quota within seconds.
+_RESPONSE_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+async def _get_json(path: str, params: dict | None = None, ttl: float = 0) -> dict | None:
     """
     Perform a signed GET request to PTV API and return parsed JSON.
 
+    When ttl > 0 the (successful) response is cached for ttl seconds.
     Returns None on any error (network, auth, or bad response) so
     callers can handle failure gracefully with a user-facing message.
     """
     if not PTV_DEVELOPER_ID or not PTV_API_KEY:
         logger.warning("PTV API call skipped — credentials not configured.")
         return None
+
+    cache_key = f"{path}?{urllib.parse.urlencode(params or {}, doseq=True)}"
+    if ttl > 0:
+        hit = _RESPONSE_CACHE.get(cache_key)
+        if hit is not None and time.time() < hit[0]:
+            return hit[1]
 
     url = _signed_url(path, params)
     try:
@@ -128,6 +142,8 @@ async def _get_json(path: str, params: dict | None = None) -> dict | None:
             if status.get("health") not in (None, 1):
                 logger.warning("PTV API unhealthy for %s: %s", path, status)
                 return None
+            if ttl > 0:
+                _RESPONSE_CACHE[cache_key] = (time.time() + ttl, data)
             return data
     except httpx.RequestError as exc:
         logger.error("PTV API request failed: %s", exc)
@@ -154,10 +170,14 @@ async def search_stops(query: str) -> list[dict] | None:
     # Outlets (ticket offices) and addresses are noise for a transport
     # bot, so they are filtered out at the source.
     path = f"/v3/search/{urllib.parse.quote(query, safe='')}"
-    data = await _get_json(path, {
-        "include_outlets": "false",
-        "include_addresses": "false",
-    })
+    data = await _get_json(
+        path,
+        {
+            "include_outlets": "false",
+            "include_addresses": "false",
+        },
+        ttl=60,  # autocomplete hammering protection (reference client TTL)
+    )
     if not data:
         return None
 
@@ -330,8 +350,8 @@ async def get_disruptions(route_name: str) -> dict | None:
         }
     """
     # First, search for the route to get its route_id
-    search_path = f"/v3/search/{urllib.parse.quote(route_name)}"
-    search_data = await _get_json(search_path)
+    search_path = f"/v3/search/{urllib.parse.quote(route_name, safe='')}"
+    search_data = await _get_json(search_path, ttl=60)
     if not search_data:
         return None
 
@@ -350,7 +370,7 @@ async def get_disruptions(route_name: str) -> dict | None:
     # documented filter used by the reference client.  v3 route ids are
     # integers, but quote defensively in case a composite id shows up.
     disp_path = f"/v3/disruptions/route/{urllib.parse.quote(str(route_id), safe='')}"
-    disp_data = await _get_json(disp_path, {"disruption_status": "current"})
+    disp_data = await _get_json(disp_path, {"disruption_status": "current"}, ttl=120)
     if not disp_data:
         return None
 

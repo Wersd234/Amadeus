@@ -38,6 +38,60 @@ from prompts import (
 )
 
 
+# ── PTV stop autocomplete (ported from the reference bot, §5.5) ────
+_ROUTE_MODE_LABELS = {0: "🚆 Train", 1: "🚋 Tram", 2: "🚌 Bus", 3: "🚂 V/Line", 4: "🌙 Nightrider"}
+_ROUTE_CODE_TO_RT = {0: "train", 1: "tram", 2: "bus", 3: "vline", 4: "bus"}
+_RT_NAME_TO_CODE = {"train": 0, "tram": 1, "bus": 2}
+
+
+def _parse_stop_choice(raw: str) -> tuple[int, int, str] | None:
+    """Decode an autocomplete choice value '{route_type}:{stop_id}:{stop_name}'.
+
+    Returns None when the user typed raw text instead of picking a choice
+    (autocomplete is only a hint, raw submission is always possible).
+    """
+    try:
+        rt_s, id_s, name = raw.split(":", 2)
+        return int(rt_s), int(id_s), name
+    except ValueError:
+        return None
+
+
+async def _stop_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    if len(current) < 2:
+        # Returning nothing for tiny inputs saves one API call per
+        # keystroke; PTV's fuzzy search is useless below 2 chars anyway.
+        return []
+    try:
+        stops = await search_stops(current)
+    except Exception:
+        # Autocomplete must never raise — Discord would only show a
+        # confusing "loading failed" to the user.
+        return []
+    if not stops:
+        return []
+
+    # If the user already picked a transport type, narrow the list to it
+    # (matches the rt filter they'll get either way).
+    hint = getattr(interaction.namespace, "route_type", None)
+    code_hint = _RT_NAME_TO_CODE.get(hint) if isinstance(hint, str) else None
+    if code_hint is not None:
+        narrowed = [s for s in stops if s["route_type"] == code_hint]
+        if narrowed:
+            stops = narrowed
+
+    choices: list[app_commands.Choice[str]] = []
+    for s in stops[:25]:  # Discord hard-caps choices at 25.
+        # The value packs everything the command needs into one string so
+        # the chosen option is self-contained (no second lookup required).
+        value = f"{s['route_type']}:{s['stop_id']}:{s['stop_name']}"
+        mode = _ROUTE_MODE_LABELS.get(s["route_type"], "?")
+        choices.append(app_commands.Choice(name=f"{s['stop_name']} ({mode})"[:100], value=value[:6000]))
+    return choices
+
+
 def setup_commands(bot) -> None:
     """
     Register all slash commands on the bot's CommandTree.
@@ -154,8 +208,9 @@ def setup_commands(bot) -> None:
         name="ptv_next",
         description="Check next departures for a Melbourne PTV stop (查询墨尔本车站下一班车)",
     )
+    @app_commands.autocomplete(stop_name=_stop_autocomplete)
     @app_commands.describe(
-        stop_name="Station/stop name, e.g. 'Flinders Street' or 'Clayton' (车站名)",
+        stop_name="Type ≥2 letters and pick a stop from the list (输入站名,从弹出列表选择)",
         route_type="Transport type: Train, Tram, or Bus (默认火车)",
     )
     @app_commands.choices(route_type=[
@@ -174,21 +229,30 @@ def setup_commands(bot) -> None:
 
         await interaction.response.defer()  # PTV API can take a moment
 
-        # Fuzzy search for the stop
-        stops = await search_stops(stop_name)
-        if not stops:
-            if lang == "zh":
-                await interaction.followup.send("🔍 找不到这个车站……你是不是把站名打错了？再试试看？")
-            else:
-                await interaction.followup.send("🔍 Couldn't find that stop. Maybe check the spelling?")
-            return
+        # Picked from autocomplete? The choice value is self-contained
+        # ("{route_type}:{stop_id}:{stop_name}") — use it directly, no
+        # second search round-trip needed.
+        picked = _parse_stop_choice(stop_name)
+        if picked:
+            rt_code, stop_id, chosen_name = picked
+            rt = _ROUTE_CODE_TO_RT.get(rt_code, rt)
+            stop = {"stop_id": stop_id, "stop_name": chosen_name}
+        else:
+            # Fuzzy search for the stop
+            stops = await search_stops(stop_name)
+            if not stops:
+                if lang == "zh":
+                    await interaction.followup.send("🔍 找不到这个车站……你是不是把站名打错了？再试试看？")
+                else:
+                    await interaction.followup.send("🔍 Couldn't find that stop. Maybe check the spelling?")
+                return
 
-        # Filter by route type, prefer exact match
-        rt_code = PTV_ROUTE_TYPES.get(rt, 0)
-        matching = [s for s in stops if s["route_type"] == rt_code]
-        if not matching:
-            matching = stops  # Fallback: show all types
-        stop = matching[0]
+            # Filter by route type, prefer exact match
+            rt_code = PTV_ROUTE_TYPES.get(rt, 0)
+            matching = [s for s in stops if s["route_type"] == rt_code]
+            if not matching:
+                matching = stops  # Fallback: show all types
+            stop = matching[0]
 
         # Fetch departures
         deps = await get_departures(rt, stop["stop_id"], max_results=3, stop_name=stop["stop_name"])
@@ -475,8 +539,9 @@ def setup_commands(bot) -> None:
         name="ptv_subscribe",
         description="Subscribe to daily delay alerts for a stop (订阅每日通勤提醒)",
     )
+    @app_commands.autocomplete(stop_name=_stop_autocomplete)
     @app_commands.describe(
-        stop_name="Station/stop name, e.g. 'Clayton' (车站名)",
+        stop_name="Type ≥2 letters and pick a stop from the list (输入站名,从弹出列表选择)",
         check_time="When to check, e.g. '08:30' (检查时间，格式 HH:MM)",
         route_type="Train, Tram, or Bus (默认火车)",
     )
@@ -510,16 +575,23 @@ def setup_commands(bot) -> None:
 
         await interaction.response.defer()
 
-        # Search for the stop
-        stops = await search_stops(stop_name)
-        if not stops:
-            if lang == "zh":
-                await interaction.followup.send("🔍 找不到这个车站……检查一下站名？")
-            else:
-                await interaction.followup.send("🔍 Couldn't find that stop. Check the spelling?")
-            return
-
-        stop = stops[0]
+        # Autocomplete choice (self-contained value) or raw fuzzy fallback.
+        picked = _parse_stop_choice(stop_name)
+        if picked:
+            rt_code, stop_id, chosen_name = picked
+            rt = _ROUTE_CODE_TO_RT.get(rt_code, rt)
+            stop = {"stop_id": stop_id, "stop_name": chosen_name}
+        else:
+            stops = await search_stops(stop_name)
+            if not stops:
+                if lang == "zh":
+                    await interaction.followup.send("🔍 找不到这个车站……检查一下站名？")
+                else:
+                    await interaction.followup.send("🔍 Couldn't find that stop. Check the spelling?")
+                return
+            rt_code = PTV_ROUTE_TYPES.get(rt, 0)
+            matching = [s for s in stops if s["route_type"] == rt_code]
+            stop = (matching or stops)[0]
         sub_id = add_ptv_subscription(
             str(interaction.user.id),
             str(interaction.channel_id),

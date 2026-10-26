@@ -121,8 +121,8 @@ class AmadeusBot(discord.Client):
         self.worldline_broadcast_loop.start()
         self.ptv_subscription_checker.start()
         await self.tree.sync()
-        logger.info("Command tree synced. Vision=%s FreeSpeak=%.0f%%",
-                    "ON" if LLM_VISION_ENABLED else "OFF", FREE_SPEAK_PROB * 100)
+        logger.info("Command tree synced. Vision=%s FreeSpeak interest topics=%d",
+                    "ON" if LLM_VISION_ENABLED else "OFF", len(FREE_SPEAK_INTERESTS))
 
     async def on_ready(self):
         # Pre-load image index (non-fatal if missing)

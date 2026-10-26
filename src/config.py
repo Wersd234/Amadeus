@@ -237,7 +237,7 @@ FREE_SPEAK_SAME_USER_COOLDOWN = True
 # After FREE_SPEAK_CONTINUATION_WINDOW_SEC of silence, the thread
 # expires and the bot goes back to interest-only mode.
 FREE_SPEAK_CONTINUATION_WINDOW_SEC = 180
-FREE_SPEAK_CONTINUATION_PROB = 0.70
+FREE_SPEAK_CONTINUATION_PROB = 0.80
 
 HISTORY_MAXLEN = 20
 MAX_REPLY_TOKENS = 1024
@@ -334,6 +334,13 @@ KEYWORD_TRIGGERS = [
 ]
 
 KEYWORD_COOLDOWN_SEC = 120
+
+# ── Name-call trigger (呼名必回) ───────────────────────────────────
+# If anyone types one of these names anywhere in a message, the bot
+# replies — same guarantee as an @mention, just without the ping.
+# (The Discord account name is "Kotori Bot"; the character's name is
+# Kurisu; the project persona is Amadeus — all three count.)
+NAME_TRIGGER_KEYWORDS = ["amadeus", "kotori", "kurisu"]
 
 # ── Tavily Search API ────────────────────────────────────────────
 # Free tier: 1000 searches/month.  Sign up at https://tavily.com

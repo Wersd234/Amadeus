@@ -42,7 +42,7 @@ except ImportError:
 
 from config import (
     logger, DISCORD_TOKEN, refresh_model, HISTORY_MAXLEN,
-    KEYWORD_TRIGGERS, KEYWORD_COOLDOWN_SEC,
+    KEYWORD_TRIGGERS, KEYWORD_COOLDOWN_SEC, NAME_TRIGGER_KEYWORDS,
     CHANNEL_SLIP_PROB, CHANNEL_SLIP_START_HOUR, CHANNEL_SLIP_END_HOUR,
     PTV_SUB_CHECK_INTERVAL_MIN, PTV_SUB_LOOKAHEAD_MIN,
     FREE_SPEAK_INTERESTS, FREE_SPEAK_COOLDOWN_SEC,
@@ -316,14 +316,20 @@ class AmadeusBot(discord.Client):
         now_ts = datetime.datetime.now().timestamp()
 
         if not is_mention and not is_reply_to_bot:
-            # Check keyword eavesdropping first (higher priority)
-            last_kw = self._last_keyword_interject.get(channel_id, 0)
-            if now_ts - last_kw >= KEYWORD_COOLDOWN_SEC and self._check_keyword_triggers(content):
+            # Called by name anywhere in the message — always answer
+            # (equivalent to a ping, but without requiring the ping).
+            if any(kw in content.lower() for kw in NAME_TRIGGER_KEYWORDS):
                 is_keyword = True
                 self._last_keyword_interject[channel_id] = now_ts
             else:
-                # Check free-speaking trigger
-                is_free_speak = self._should_free_speak(channel_id, now_ts, content, user_id, not message.guild)
+                # Check keyword eavesdropping first (higher priority)
+                last_kw = self._last_keyword_interject.get(channel_id, 0)
+                if now_ts - last_kw >= KEYWORD_COOLDOWN_SEC and self._check_keyword_triggers(content):
+                    is_keyword = True
+                    self._last_keyword_interject[channel_id] = now_ts
+                else:
+                    # Check free-speaking trigger
+                    is_free_speak = self._should_free_speak(channel_id, now_ts, content, user_id, not message.guild)
 
             if not is_keyword and not is_free_speak:
                 return  # Nothing triggered — stay silent
@@ -559,6 +565,11 @@ class AmadeusBot(discord.Client):
         content_lower = content.lower()
 
         # ── Step 1: Interest category match ─────────────────────
+        # A category match whose dice roll fails does NOT silence the
+        # message: it falls through to the conversation-continuity
+        # check below (otherwise ordinary follow-ups in a live thread
+        # get swallowed by the first common keyword like "?").
+        matched = False
         for _label, keywords, prob_group, prob_dm in FREE_SPEAK_INTERESTS:
             for kw in keywords:
                 if kw.lower() in content_lower:
@@ -566,7 +577,10 @@ class AmadeusBot(discord.Client):
                     if random.random() < prob:
                         self._last_free_speak_author[channel_id] = author_id
                         return True
-                    return False  # Matched a category but roll failed — don't check others
+                    matched = True
+                    break
+            if matched:
+                break  # Matched one category but roll failed — don't check others
 
         # ── Step 2: Conversation continuity ─────────────────────
         # Check per-user: did the bot recently reply to THIS specific user?

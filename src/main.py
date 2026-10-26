@@ -28,7 +28,16 @@ from collections import deque
 
 import discord
 from discord.ext import tasks
-from PIL import Image
+
+# Pillow is only needed for image processing (user-uploaded pictures).
+# It requires system C libraries (libjpeg, zlib) that may be missing
+# in slim Docker images.  If unavailable, the bot still starts —
+# image attachments are simply skipped.
+try:
+    from PIL import Image
+    _pillow_available = True
+except ImportError:
+    _pillow_available = False
 
 from config import (
     logger, DISCORD_TOKEN, refresh_model, HISTORY_MAXLEN,
@@ -336,7 +345,7 @@ class AmadeusBot(discord.Client):
                     image_bytes = await att.read()
                     break
 
-            if image_bytes:
+            if image_bytes and _pillow_available:
                 if not vision_available():
                     # Non-Qwen model — return playful "repair" message immediately
                     if lang == "zh":

@@ -191,7 +191,7 @@ def setup_commands(bot) -> None:
         stop = matching[0]
 
         # Fetch departures
-        deps = await get_departures(rt, stop["stop_id"], max_results=3)
+        deps = await get_departures(rt, stop["stop_id"], max_results=3, stop_name=stop["stop_name"])
         if not deps:
             if lang == "zh":
                 await interaction.followup.send("⚠️ PTV API 请求失败了……可能是神秘组织在干扰信号。稍后再试吧。")

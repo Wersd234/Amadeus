@@ -219,7 +219,7 @@ class AmadeusBot(discord.Client):
         logger.info("⏰ PTV check: %d subs due at %s", len(due), now_str)
         for sub in due:
             try:
-                deps = await get_departures(sub["route_type"], sub["stop_id"], max_results=3)
+                deps = await get_departures(sub["route_type"], sub["stop_id"], max_results=3, stop_name=sub["stop_name"])
                 if not deps:
                     continue
                 issue = None

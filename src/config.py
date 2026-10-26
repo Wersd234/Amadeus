@@ -320,27 +320,17 @@ AFFINITY_TIERS = [
 ]
 
 # ── Keyword Eavesdropping ──────────────────────────────────────────
-KEYWORD_TRIGGERS = [
-    (["kurisu", "kristina", "kurisutina"], 0.60),
-    (["christina", "克里斯蒂娜"], 0.60),
-    (["assistant", "助手"], 0.60),
-    (["zombie", "僵尸"], 0.50),
-    (["dr pepper", "dr. pepper", "dr.pepper"], 0.35),
-    (["train", "火车", "metro", "metrotrain"], 0.20),
-    (["tram", "电车"], 0.20),
-    (["ptv", "myki"], 0.25),
-    (["weather", "天气", "墨尔本天气"], 0.15),
-    (["steins gate", "stein's gate", "命运石之门", "石头门"], 0.40),
-]
+# Topic-word eavesdropping retired: the only words that summon her are
+# her names (see NAME_TRIGGER_KEYWORDS).  Interest-driven free-speaking
+# still covers topical chatter (science / Melbourne / food / otaku...).
+KEYWORD_TRIGGERS = []
 
 KEYWORD_COOLDOWN_SEC = 120
 
 # ── Name-call trigger (呼名必回) ───────────────────────────────────
 # If anyone types one of these names anywhere in a message, the bot
 # replies — same guarantee as an @mention, just without the ping.
-# (The Discord account name is "Kotori Bot"; the character's name is
-# Kurisu; the project persona is Amadeus — all three count.)
-NAME_TRIGGER_KEYWORDS = ["amadeus", "kotori", "kurisu"]
+NAME_TRIGGER_KEYWORDS = ["amadeus", "助手", "牧濑红莉栖", "红莉栖", "kurisu"]
 
 # ── Tavily Search API ────────────────────────────────────────────
 # Free tier: 1000 searches/month.  Sign up at https://tavily.com

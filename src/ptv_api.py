@@ -13,9 +13,11 @@ All functions return structured dicts; the caller (commands.py) is
 responsible for formatting them into Discord embeds.
 """
 
+import asyncio
 import hashlib
 import hmac
 import urllib.parse
+from datetime import datetime
 from typing import Optional
 
 import httpx
@@ -64,8 +66,10 @@ def _signed_url(path: str, query_params: dict | None = None) -> str:
     if query_params is None:
         query_params = {}
 
-    # Build the "raw" query string (only the business params, no auth)
-    raw_qs = urllib.parse.urlencode(query_params) if query_params else ""
+    # Build the "raw" query string (only the business params, no auth).
+    # doseq=True is required: PTV array parameters (expand, route_types)
+    # use the repeated-parameter form (?expand=route&expand=run&...).
+    raw_qs = urllib.parse.urlencode(query_params, doseq=True) if query_params else ""
     raw_uri = f"{path}?{raw_qs}" if raw_qs else path
 
     sep = "&" if "?" in raw_uri else "?"
@@ -95,15 +99,36 @@ async def _get_json(path: str, params: dict | None = None) -> dict | None:
     url = _signed_url(path, params)
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                return resp.json()
-            elif resp.status_code == 403:
+            # PTV does not document its quota — on 429 back off
+            # exponentially (1s, 2s, 4s) instead of guessing (port of
+            # the reference client's retry loop).
+            resp = None
+            for attempt in range(3):
+                resp = await client.get(url)
+                if resp.status_code == 429:
+                    retry_after = float(resp.headers.get("Retry-After", 2 ** attempt))
+                    await asyncio.sleep(retry_after)
+                    continue
+                break
+
+            if resp is None or resp.status_code == 429:
+                logger.warning("PTV API rate limited (3 retries) for %s", path)
+                return None
+            if resp.status_code == 403:
                 logger.error("PTV API returned 403 — check your Developer ID and API Key.")
                 return None
-            else:
+            if resp.status_code != 200:
                 logger.warning("PTV API HTTP %d for %s", resp.status_code, path)
                 return None
+
+            data = resp.json()
+            # PTV sometimes returns HTTP 200 with an unhealthy status
+            # payload; treat it as an error so callers don't render garbage.
+            status = data.get("status") or {}
+            if status.get("health") not in (None, 1):
+                logger.warning("PTV API unhealthy for %s: %s", path, status)
+                return None
+            return data
     except httpx.RequestError as exc:
         logger.error("PTV API request failed: %s", exc)
         return None
@@ -124,8 +149,15 @@ async def search_stops(query: str) -> list[dict] | None:
         Each entry: {stop_id, stop_name, route_type, suburb}
         Returns None on API failure.
     """
-    path = f"/v3/search/{urllib.parse.quote(query)}"
-    data = await _get_json(path)
+    # safe='' is critical: any reserved char left unencoded would change
+    # the wire URL and invalidate the HMAC signature.
+    # Outlets (ticket offices) and addresses are noise for a transport
+    # bot, so they are filtered out at the source.
+    path = f"/v3/search/{urllib.parse.quote(query, safe='')}"
+    data = await _get_json(path, {
+        "include_outlets": "false",
+        "include_addresses": "false",
+    })
     if not data:
         return None
 
@@ -144,6 +176,7 @@ async def get_departures(
     route_type: str,
     stop_id: int,
     max_results: int = 3,
+    stop_name: str | None = None,
 ) -> dict | None:
     """
     Get upcoming departures for a specific stop.
@@ -181,34 +214,51 @@ async def get_departures(
     type_code = PTV_ROUTE_TYPES.get(route_type, 0)
     path = f"/v3/departures/route_type/{type_code}/stop/{stop_id}"
     params = {
-        "route_type": type_code,
         "max_results": max_results,
-        "expand": ["run", "direction"],
+        # Expanding route/run/direction inline avoids three follow-up
+        # requests per departure row.  Array params are encoded as
+        # repeated params via doseq=True (see _signed_url).
+        "expand": ["route", "run", "direction"],
+        "look_backwards": "false",
     }
 
     data = await _get_json(path, params)
     if not data:
         return None
 
-    stop_name = data.get("stop_name", "Unknown Stop")
+    # v3 returns expanded entities as top-level maps keyed by ref/id —
+    # NOT inline objects inside each departure.
+    runs = data.get("runs") or {}
+    directions_map = data.get("directions") or {}
+    routes_map = data.get("routes") or {}
+
+    stop_name = stop_name or data.get("stop_name") or "Unknown Stop"
     departures = []
 
+    # NOTE: the expansion maps are keyed by STRING ids while the
+    # departure/run objects carry INTEGER ids (route_id: 16 vs key "16").
+    # Every map lookup must str() its key or it silently misses.
     for dep in data.get("departures", [])[:max_results]:
-        run = dep.get("run", {})
-        route_name = run.get("route_name", run.get("route_number", "?"))
-        direction = dep.get("direction", {}).get("direction_name", "Unknown")
+        run = runs.get(str(dep.get("run_ref", ""))) or {}
+        route = routes_map.get(str(run.get("route_id", dep.get("route_id", "")))) or {}
+        route_name = (
+            route.get("route_name")
+            or run.get("route_name")
+            or f"Route {dep.get('route_no', '?')}"
+        )
+        direction = (directions_map.get(str(dep.get("direction_id", ""))) or {}).get(
+            "direction_name", "Unknown"
+        )
 
         # Platform info
         platform = dep.get("platform_number")
         platform_str = str(platform) if platform is not None else None
 
-        # Scheduled vs estimated departure time
-        scheduled = dep.get("scheduled_departure", "")
-        estimated = dep.get("estimated_departure")
-
-        # PTV returns times like "2026-10-26T14:23:00Z" — we extract HH:MM
-        sched_time = _extract_time(scheduled)
-        est_time = _extract_time(estimated) if estimated else None
+        # v3 field names carry the _utc suffix.  Times arrive UTC
+        # ("2026-10-26T14:23:00Z"); convert to the process-local zone
+        # (container TZ = Australia/Melbourne) so HH:MM is wall-clock.
+        sched_time = _iso_to_local_hhmm(dep.get("scheduled_departure_utc"))
+        est_time = _iso_to_local_hhmm(dep.get("estimated_departure_utc"))
 
         # Determine delay
         delay_minutes = 0
@@ -225,9 +275,20 @@ async def get_departures(
             except ValueError:
                 pass
 
-        # Check for bus replacement / flags
-        flags = dep.get("flags", {})
-        is_bus_replacement = "RR" in route_name.upper() or flags.get("is_bus_substitution", False)
+        # Check for bus replacement / flags.  v3 flags are NOT a dict:
+        # a departure's "flags" is a bare string ("normal"/"express"/...)
+        # and a run's "flags" is a list of strings — normalize defensively.
+        raw_flags = run.get("flags") or dep.get("flags") or []
+        if isinstance(raw_flags, str):
+            flag_list = [raw_flags]
+        elif isinstance(raw_flags, (list, tuple)):
+            flag_list = [str(f) for f in raw_flags]
+        else:
+            flag_list = []
+        is_bus_replacement = "RR" in route_name.upper() or any(
+            "SUBSTITUTION" in f.upper() or "REPLACEMENT" in f.upper()
+            for f in flag_list
+        )
 
         departures.append({
             "route_name": route_name,
@@ -285,17 +346,33 @@ async def get_disruptions(route_name: str) -> dict | None:
     if not route_id:
         return {"route_name": route_name, "has_disruption": False, "disruptions": []}
 
-    # Fetch disruptions for this route
-    disp_path = f"/v3/disruptions/route/{route_id}"
-    disp_data = await _get_json(disp_path)
+    # Fetch disruptions for this route.  disruption_status=current is the
+    # documented filter used by the reference client.  v3 route ids are
+    # integers, but quote defensively in case a composite id shows up.
+    disp_path = f"/v3/disruptions/route/{urllib.parse.quote(str(route_id), safe='')}"
+    disp_data = await _get_json(disp_path, {"disruption_status": "current"})
     if not disp_data:
         return None
 
     disruptions = []
     has_bus_replacement = False
     has_major_delay = False
+    seen = set()
 
-    for d in disp_data.get("disruptions", {}).get("general", []):
+    # v3 buckets disruptions by severity — show all of them, not just
+    # "general" (which is often empty during real disruptions).
+    disp_obj = disp_data.get("disruptions") or {}
+    if isinstance(disp_obj, list):
+        buckets = [disp_obj]
+    else:
+        buckets = [disp_obj.get(k) or [] for k in ("general", "major", "minor", "significant")]
+
+    for bucket in buckets:
+      for d in bucket:
+        key = (d.get("title", ""), d.get("description", ""))
+        if key in seen:
+            continue
+        seen.add(key)
         title = d.get("title", "Disruption")
         desc = d.get("description", "")
         d_type = d.get("disruption_type", "unknown")
@@ -327,7 +404,7 @@ async def get_disruptions(route_name: str) -> dict | None:
 # ═══════════════════════════════════════════════════════════════════
 
 def _extract_time(iso_str: str) -> str | None:
-    """Extract HH:MM from an ISO-8601 timestamp string."""
+    """Extract HH:MM from an ISO-8601 timestamp string (raw, no zone shift)."""
     if not iso_str:
         return None
     # Expected: "2026-10-26T14:23:00Z"
@@ -335,6 +412,22 @@ def _extract_time(iso_str: str) -> str | None:
         return iso_str.split("T")[1][:5]
     except IndexError:
         return None
+
+
+def _iso_to_local_hhmm(iso_str: str | None) -> str | None:
+    """
+    Convert a PTV UTC ISO timestamp ("2026-10-26T14:23:00Z") to local
+    HH:MM using the process timezone (container TZ = Australia/Melbourne).
+    The reference bot solves this with Discord <t:...:t> tags; since this
+    embed shows plain HH:MM, the conversion has to happen here.
+    """
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00")).astimezone()
+        return dt.strftime("%H:%M")
+    except ValueError:
+        return _extract_time(iso_str)
 
 
 def _time_to_minutes(hhmm: str) -> int:

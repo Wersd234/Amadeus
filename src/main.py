@@ -34,8 +34,9 @@ from config import (
     KEYWORD_TRIGGERS, KEYWORD_COOLDOWN_SEC, EMOTION_EMOJIS,
     CHANNEL_SLIP_PROB, CHANNEL_SLIP_START_HOUR, CHANNEL_SLIP_END_HOUR,
     PTV_SUB_CHECK_INTERVAL_MIN, PTV_SUB_LOOKAHEAD_MIN,
-    FREE_SPEAK_MSG_THRESHOLD, FREE_SPEAK_COOLDOWN_MIN,
-    FREE_SPEAK_PROB, FREE_SPEAK_WARMUP_MSGS,
+    FREE_SPEAK_PROB, FREE_SPEAK_MIN_GAP_MSGS,
+    FREE_SPEAK_ACTIVE_WINDOW_MSGS, FREE_SPEAK_PROB_ACTIVE,
+    FREE_SPEAK_COOLDOWN_SEC, FREE_SPEAK_WARMUP_MSGS,
     LLM_VISION_ENABLED,
 )
 from utils import (
@@ -86,6 +87,9 @@ class AmadeusBot(discord.Client):
 
         # Free-speaking cooldown per channel
         self._last_free_speak: dict[str, float] = {}
+
+        # Track which message number the bot last spoke at (for message-gap logic)
+        self._last_free_speak_msg: dict[str, int] = {}
 
         # Convergence announcement guards
         self._convergence_announced_start: bool = False
@@ -395,6 +399,7 @@ class AmadeusBot(discord.Client):
                         f"Recent messages:\n{rc}]"
                     )
                 self._last_free_speak[channel_id] = now_ts
+                self._last_free_speak_msg[channel_id] = self.msg_seen.get(channel_id, 0)
 
             # Dynamic injects
             injects = self._build_dynamic_injects(lang, wl)
@@ -469,14 +474,16 @@ class AmadeusBot(discord.Client):
 
     def _should_free_speak(self, channel_id: str, now_ts: float) -> bool:
         """
-        Determine whether the bot should spontaneously join the conversation.
+        Decide whether the bot should spontaneously join the conversation.
 
-        Conditions (all must be true):
+        Uses message-gap logic (not time-interval logic):
           1. Warmup: at least FREE_SPEAK_WARMUP_MSGS seen in this channel
-          2. Threshold: msg_seen % FREE_SPEAK_MSG_THRESHOLD == 0
-             (triggers every N messages)
-          3. Cooldown: at least FREE_SPEAK_COOLDOWN_MIN since last free-speak
-          4. Random: FREE_SPEAK_PROB dice roll passes
+          2. Gap: at least FREE_SPEAK_MIN_GAP_MSGS since the bot last spoke
+          3. Cooldown: at least FREE_SPEAK_COOLDOWN_SEC since last message (safety net)
+          4. Probability: base prob or higher "active" prob if recently engaged
+
+        This is checked on EVERY message (not just at thresholds), so the
+        bot can jump in at any natural point.
         """
         if FREE_SPEAK_PROB <= 0:
             return False
@@ -485,14 +492,24 @@ class AmadeusBot(discord.Client):
         if seen < FREE_SPEAK_WARMUP_MSGS:
             return False
 
-        if seen % FREE_SPEAK_MSG_THRESHOLD != 0:
+        # Anti-spam: absolute minimum seconds between any two messages
+        last_any = self._last_free_speak.get(channel_id, 0)
+        if now_ts - last_any < FREE_SPEAK_COOLDOWN_SEC:
             return False
 
-        last = self._last_free_speak.get(channel_id, 0)
-        if now_ts - last < FREE_SPEAK_COOLDOWN_MIN * 60:
+        # Message-gap: must have seen enough messages since last speaking
+        # Track which message number the bot last spoke at
+        last_msg_num = self._last_free_speak_msg.get(channel_id, -999)
+        if seen - last_msg_num < FREE_SPEAK_MIN_GAP_MSGS:
             return False
 
-        return random.random() < FREE_SPEAK_PROB
+        # Choose probability: higher if bot is "engaged" (spoke recently)
+        if seen - last_msg_num <= FREE_SPEAK_ACTIVE_WINDOW_MSGS:
+            prob = FREE_SPEAK_PROB_ACTIVE
+        else:
+            prob = FREE_SPEAK_PROB
+
+        return random.random() < prob
 
 
 # ═══════════════════════════════════════════════════════════════════

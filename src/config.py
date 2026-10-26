@@ -61,18 +61,38 @@ else:
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 # ── Free-Speaking Mode (群友自由发言) ──────────────────────────────
-# The bot monitors all messages in channels it can see and occasionally
-# jumps into conversations naturally, like a real group member.
-# These parameters control the frequency to avoid spam.
+# The bot monitors all messages and jumps into conversations like a real
+# group member.  Unlike keyword eavesdropping (which needs specific triggers),
+# free-speaking lets the bot join ANY active conversation naturally.
+#
+# Design philosophy: message-gap-based, not time-based.
+# A real person doesn't wait 8 minutes between messages — they read a few
+# messages, then reply.  So the bot:
+#   - Rolls a probability check on EVERY message (not just at thresholds)
+#   - After speaking, waits at least N messages before speaking again
+#   - Once engaged (spoke recently), becomes more likely to keep talking
+#   - Has a short absolute cooldown as an anti-spam safety net
 
-# After this many messages accumulate in a channel, the bot considers chiming in
-FREE_SPEAK_MSG_THRESHOLD = 12
-# Minimum minutes between two free-speaking interjections (per channel)
-FREE_SPEAK_COOLDOWN_MIN = 8
-# Probability (0.0–1.0) of chiming in when the threshold is hit
+# Per-message probability of chiming in (0.0–1.0).  Set to 0 to disable.
 FREE_SPEAK_PROB = 0.06
-# Minimum messages the bot must have seen before its first interjection
-# in a channel (prevents jumping in immediately after restart)
+
+# After the bot speaks, it must see at least this many messages before
+# speaking again — like a person reading before responding.
+FREE_SPEAK_MIN_GAP_MSGS = 4
+
+# If the bot spoke within this many messages, it's "engaged" and uses
+# a higher probability to keep the conversation flowing naturally.
+FREE_SPEAK_ACTIVE_WINDOW_MSGS = 12
+
+# Higher probability when the bot is already engaged in conversation.
+FREE_SPEAK_PROB_ACTIVE = 0.14
+
+# Absolute minimum seconds between any two bot messages (anti-spam safety).
+# Unlike the old 8-minute cooldown, this is just a short guardrail.
+FREE_SPEAK_COOLDOWN_SEC = 20
+
+# Minimum total messages the bot must have seen in a channel before its
+# first free-speaking interjection (prevents jumping in cold after restart).
 FREE_SPEAK_WARMUP_MSGS = 20
 
 HISTORY_MAXLEN = 20

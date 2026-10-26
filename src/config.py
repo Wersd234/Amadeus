@@ -139,6 +139,28 @@ FREE_SPEAK_COOLDOWN_SEC = 25
 # Do NOT reply to consecutive messages from the same user (avoid stalker vibe).
 FREE_SPEAK_SAME_USER_COOLDOWN = True
 
+# ── Conversation Continuity (对话线程) ──────────────────────────
+# If the bot just replied to someone and that person replies back,
+# it is a conversation thread — keep replying even if the content
+# does not match any interest category.  This prevents:
+#   群友: Amadeus 在吗  →  Bot: 在的
+#   群友: 我失眠了      →  Bot: [沉默]  ← BAD
+# After FREE_SPEAK_CONTINUATION_WINDOW_SEC of silence, the thread
+# expires and the bot goes back to interest-only mode.
+FREE_SPEAK_CONTINUATION_WINDOW_SEC = 180
+FREE_SPEAK_CONTINUATION_PROB = 0.70
+
+# ── Conversation Continuity (对话线程) ──────────────────────────
+# If the bot just replied to someone and that person replies back,
+# it is a conversation thread — keep replying even if the content
+# does not match any interest category.  This prevents:
+#   群友: Amadeus 在吗  →  Bot: 在的
+#   群友: 我失眠了      →  Bot: [沉默]  ← BAD
+# After FREE_SPEAK_CONTINUATION_WINDOW_SEC of silence, the thread
+# expires and the bot goes back to interest-only mode.
+FREE_SPEAK_CONTINUATION_WINDOW_SEC = 180
+FREE_SPEAK_CONTINUATION_PROB = 0.70
+
 HISTORY_MAXLEN = 20
 MAX_REPLY_TOKENS = 1024
 MAX_MEMORY_TOKENS = 512

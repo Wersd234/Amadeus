@@ -37,6 +37,7 @@ from config import (
     PTV_SUB_CHECK_INTERVAL_MIN, PTV_SUB_LOOKAHEAD_MIN,
     FREE_SPEAK_INTERESTS, FREE_SPEAK_COOLDOWN_SEC,
     FREE_SPEAK_SAME_USER_COOLDOWN,
+    FREE_SPEAK_CONTINUATION_WINDOW_SEC, FREE_SPEAK_CONTINUATION_PROB,
     LLM_VISION_ENABLED,
     TAVILY_API_KEY,
 )
@@ -91,6 +92,10 @@ class AmadeusBot(discord.Client):
 
         # Track last author the bot replied to (prevent replying to same user twice)
         self._last_free_speak_author: dict[str, str] = {}
+
+        # Conversation continuity: (user_id, timestamp) of the last person
+        # the bot replied to.  Used to keep a thread alive.
+        self._last_reply_to: dict[str, tuple[str, float]] = {}
 
         # Convergence announcement guards
         self._convergence_announced_start: bool = False
@@ -400,6 +405,7 @@ class AmadeusBot(discord.Client):
                         f"Recent messages:\n{rc}]"
                     )
                 self._last_free_speak[channel_id] = now_ts
+                self._last_reply_to[channel_id] = (user_id, now_ts)
 
             # Dynamic injects
             injects = self._build_dynamic_injects(lang, wl)
@@ -495,6 +501,8 @@ class AmadeusBot(discord.Client):
 
             # ── Reply ────────────────────────────────────────────
             await message.reply(content=reply_text)
+            # Track for conversation continuity
+            self._last_reply_to[channel_id] = (user_id, datetime.datetime.now().timestamp())
 
             # Emoji reaction
             try:
@@ -506,28 +514,29 @@ class AmadeusBot(discord.Client):
 
     def _should_free_speak(self, channel_id: str, now_ts: float, content: str, author_id: str, is_dm: bool) -> bool:
         """
-        Interest-driven reply decision.
+        Interest-driven reply decision with conversation continuity.
 
-        Scans message content against interest categories.  If the topic
-        is something the bot cares about and probability passes → reply.
-        If nothing interesting → stay silent.
+        1. Check interest categories (questions, science, Melbourne, etc.)
+        2. If no interest match, check if this is a conversation thread:
+           the bot just replied to this person and they're talking back.
+        3. DM channels use stricter probabilities.
 
-        DM channels use stricter probabilities (the bot should reply less
-        in 1-on-1 since every message is implicitly directed at it).
+        This prevents the bot from going silent mid-conversation just
+        because the follow-up message doesn't contain a keyword.
         """
         # Safety net: absolute minimum seconds between any two messages
         last_any = self._last_free_speak.get(channel_id, 0)
         if now_ts - last_any < FREE_SPEAK_COOLDOWN_SEC:
             return False
 
-        # Don't reply to the same user twice in a row (avoids stalker vibe)
-        if FREE_SPEAK_SAME_USER_COOLDOWN:
-            last_author = self._last_free_speak_author.get(channel_id)
-            if last_author == author_id:
-                return False
+        # Don't reply to the same user twice in a row UNLESS it's a
+        # conversation thread (continuation overrides this below)
+        last_author = self._last_free_speak_author.get(channel_id)
+        same_user = (last_author == author_id)
 
         content_lower = content.lower()
 
+        # ── Step 1: Interest category match ─────────────────────
         for _label, keywords, prob_group, prob_dm in FREE_SPEAK_INTERESTS:
             for kw in keywords:
                 if kw.lower() in content_lower:
@@ -536,6 +545,23 @@ class AmadeusBot(discord.Client):
                         self._last_free_speak_author[channel_id] = author_id
                         return True
                     return False  # Matched a category but roll failed — don't check others
+
+        # ── Step 2: Conversation continuity ─────────────────────
+        # If the bot recently replied to this person, keep the thread alive
+        # even if the content doesn't match any interest category.
+        last_thread = self._last_reply_to.get(channel_id)
+        if last_thread:
+            thread_user, thread_ts = last_thread
+            if (thread_user == author_id and
+                now_ts - thread_ts < FREE_SPEAK_CONTINUATION_WINDOW_SEC):
+                if random.random() < FREE_SPEAK_CONTINUATION_PROB:
+                    self._last_free_speak_author[channel_id] = author_id
+                    return True
+                return False  # Continuation check failed — stay silent
+
+        # ── Step 3: Same-user guard (only if NOT a thread) ──────
+        if FREE_SPEAK_SAME_USER_COOLDOWN and same_user:
+            return False
 
         return False  # Nothing interesting
 

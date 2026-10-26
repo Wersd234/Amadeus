@@ -33,31 +33,33 @@ def _sign_request(path_with_query: str) -> str:
     """
     Produce the HMAC-SHA1 hex signature required by PTV API v3.
 
-    PTV's signing convention:
-      - The string to sign is the raw URI path + query (no devid/signature).
+    PTV's signing convention (the most common cause of 403s is
+    getting these details wrong):
+      - The string to sign is the path + query INCLUDING `devid`.
+      - The scheme/host must NOT be part of the signed string.
       - The HMAC key is the API key (NOT the developer ID).
-      - The result is hex-encoded and appended as `&signature=...`.
+      - The digest is lowercase hex, appended last as `&signature=...`
+        (the signature itself is not covered by the HMAC).
 
     Example:
-      path = "/v3/departures/route_type/0/stop/1071?route_type=0&max_results=3"
-      signature = HMAC-SHA1(PTV_API_KEY, path).hexdigest()
+      to_sign = "/v3/departures/route_type/0/stop/1071?max_results=3&devid=1234"
+      signature = HMAC-SHA1(PTV_API_KEY, to_sign).hexdigest()
     """
-    # PTV expects the raw bytes of the path, not URL-encoded
     digest = hmac.new(
         PTV_API_KEY.encode("utf-8"),
         path_with_query.encode("utf-8"),
         hashlib.sha1,
     ).hexdigest()
-    return digest.upper()
+    return digest
 
 
 def _signed_url(path: str, query_params: dict | None = None) -> str:
     """
     Build a fully-signed PTV API URL.
 
-    1. Build path + query string (without devid & signature)
-    2. Sign it
-    3. Append devid and signature to the query
+    1. Build path + query string (business params only)
+    2. Append `devid` BEFORE signing (it must be part of the HMAC input)
+    3. Sign, then append `&signature=...`
     """
     if query_params is None:
         query_params = {}
@@ -66,19 +68,13 @@ def _signed_url(path: str, query_params: dict | None = None) -> str:
     raw_qs = urllib.parse.urlencode(query_params) if query_params else ""
     raw_uri = f"{path}?{raw_qs}" if raw_qs else path
 
-    signature = _sign_request(raw_uri)
+    sep = "&" if "?" in raw_uri else "?"
+    to_sign = f"{raw_uri}{sep}devid={PTV_DEVELOPER_ID}"
 
-    # Now append devid and signature
-    auth_params = {
-        "devid": PTV_DEVELOPER_ID,
-        "signature": signature,
-    }
-    if raw_qs:
-        final_qs = f"{raw_qs}&{urllib.parse.urlencode(auth_params)}"
-    else:
-        final_qs = urllib.parse.urlencode(auth_params)
+    signature = _sign_request(to_sign)
 
-    return f"{PTV_BASE_URL}{path}?{final_qs}"
+    # Wire URL must be byte-identical to the signed string + signature
+    return f"{PTV_BASE_URL}{to_sign}&signature={signature}"
 
 
 # ═══════════════════════════════════════════════════════════════════

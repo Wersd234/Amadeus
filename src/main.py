@@ -330,6 +330,21 @@ class AmadeusBot(discord.Client):
 
         now_ts = datetime.datetime.now().timestamp()
 
+        # ── Reply style ──────────────────────────────────────────
+        # Unless the bot was @-mentioned, respond as a plain message
+        # instead of a Discord "reply" — no reply reference/mention.
+        async def _respond(text: str, file=None):
+            if is_mention:
+                if file is None:
+                    await message.reply(content=text)
+                else:
+                    await message.reply(content=text, file=file)
+            else:
+                if file is None:
+                    await message.channel.send(content=text)
+                else:
+                    await message.channel.send(content=text, file=file)
+
         if not is_mention and not is_reply_to_bot:
             # Called by name anywhere in the message — always answer
             # (equivalent to a ping, but without requiring the ping).
@@ -371,12 +386,12 @@ class AmadeusBot(discord.Client):
                 if not vision_available():
                     # Non-Qwen model — return playful "repair" message immediately
                     if lang == "zh":
-                        await message.reply(
+                        await _respond(
                             "*(啊……视觉模块正在维护中，暂时没法看图。"
                             "等我切换到 Qwen 模型再说吧，笨蛋。)*"
                         )
                     else:
-                        await message.reply(
+                        await _respond(
                             "*(Ah... the vision module is under maintenance right now. "
                             "Try again when I'm running on a Qwen model, you idiot.)*"
                         )
@@ -472,12 +487,12 @@ class AmadeusBot(discord.Client):
             # Handle vision-unavailable sentinel
             if llm_resp and llm_resp.get("reply") == "__VISION_UNAVAILABLE__":
                 if lang == "zh":
-                    await message.reply(
+                    await _respond(
                         "*(啊……视觉模块正在维护中，暂时没法看图。"
                         "等我切换到 Qwen 模型再说吧，笨蛋。)*"
                     )
                 else:
-                    await message.reply(
+                    await _respond(
                         "*(Ah... the vision module is under maintenance right now. "
                         "Try again when I'm running on a Qwen model, you idiot.)*"
                     )
@@ -486,7 +501,7 @@ class AmadeusBot(discord.Client):
             if llm_resp is None:
                 fail = ("*(Amadeus 信号中断……)*" if lang == "zh"
                         else "*(Amadeus's signal was lost...)*")
-                await message.reply(content=fail)
+                await _respond(fail)
                 return
 
             emotion = llm_resp.get("emotion", "other")
@@ -547,9 +562,9 @@ class AmadeusBot(discord.Client):
                 image_path = get_image_for_emotion(emotion, self.image_index)
 
             if image_path and os.path.exists(image_path):
-                await message.reply(content=reply_text, file=discord.File(image_path))
+                await _respond(reply_text, file=discord.File(image_path))
             else:
-                await message.reply(content=reply_text)
+                await _respond(reply_text)
             # Track for conversation continuity (per-user)
             self._last_reply_to.setdefault(channel_id, {})[user_id] = datetime.datetime.now().timestamp()
 

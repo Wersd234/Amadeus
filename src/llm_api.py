@@ -102,6 +102,27 @@ def _strip_fw_narration(text: str) -> str:
     return cleaned.strip()
 
 
+def _clean_punctuation(text: str) -> str:
+    """
+    Strip overflow/excess punctuation while keeping the meaningful ones.
+
+    - Collapse runs of the SAME punctuation to a single one (！！！→！,
+      ？？→？, ，，→，) so the tone keeps its force without the clutter.
+    - Keep ellipsis （……） and single meaning-bearing marks（？！，。…）.
+    - Remove stray punctuation at the very start of a message.
+    """
+    if not text:
+        return text
+    # Normalize any run of dots/… into a single standard ellipsis ……
+    text = re.sub(r"\.{3,}", "……", text)
+    text = re.sub(r"…+", "……", text)
+    # Collapse repeated identical punctuation to one instance
+    text = re.sub(r"([！？，。；：、,;:!?])\1{1,}", r"\1", text)
+    # Drop stray leading punctuation
+    text = re.sub(r"^[！？，。；：、,;:\s…]+", "", text)
+    return text.strip()
+
+
 def clean_reply_text(text: str) -> str:
     """
     Remove leaked chain-of-thought / inner-monologue from a reply
@@ -112,7 +133,7 @@ def clean_reply_text(text: str) -> str:
     JSON braces the model may have leaked around the reply.
     """
     if not text:
-        return text
+        return "……"
     cleaned = text
     for pat, repl, *flags in _COT_PATTERNS:
         cleaned = re.sub(pat, repl, cleaned, flags=flags[0] if flags else 0)
@@ -120,7 +141,11 @@ def clean_reply_text(text: str) -> str:
     cleaned = cleaned.replace("</thinking>", "").replace("[think]", "")
     # Full-width-paren narration (Chinese model leak style)
     cleaned = _strip_fw_narration(cleaned)
-    return cleaned.strip()
+    # Overflow / excess punctuation
+    cleaned = _clean_punctuation(cleaned)
+    # Never return an empty message — fall back to a silent ellipsis so
+    # the bot still visibly acknowledges the message.
+    return cleaned.strip() or "……"
 
 
 # ═══════════════════════════════════════════════════════════════════

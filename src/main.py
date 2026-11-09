@@ -306,6 +306,33 @@ class AmadeusBot(discord.Client):
             return parts
         return f"{name}: {content}" if name else content
 
+    @staticmethod
+    def _split_bubbles(text: str, max_len: int = 40, max_bubbles: int = 4) -> list[str]:
+        """Split a reply into short 'chat bubbles' (like a real member
+        sending a few quick messages instead of one long essay)."""
+        text = (text or "").strip()
+        if not text:
+            return []
+        if len(text) <= max_len:
+            return [text]
+        # Prefer sentence/clause boundaries, then merge pieces that fit
+        pieces = re.split(r"(?<=[。！？!?~…；;:,、])", text)
+        bubbles: list[str] = []
+        for p in pieces:
+            p = p.strip()
+            if not p:
+                continue
+            if bubbles and len(bubbles[-1]) + len(p) <= max_len:
+                bubbles[-1] += p
+            else:
+                bubbles.append(p)
+        # Never send more than a few bubbles
+        while len(bubbles) > max_bubbles:
+            a = bubbles.pop(0)
+            b = bubbles.pop(0)
+            bubbles.insert(0, a + b)
+        return bubbles
+
     def _history_as_messages(self, channel_id: str, current_name: str) -> list[dict]:
         """Render per-channel history with explicit speaker labels."""
         out = []
@@ -376,12 +403,22 @@ class AmadeusBot(discord.Client):
 
         # ── Reply style ──────────────────────────────────────────
         # Always reply as a plain message — no Discord reply reference
-        # and no @-mention, so replies read like a normal group member.
+        # and no @-mention. Long replies are split into short chat
+        # bubbles with a small typing pause between them, so replies
+        # read like a real group member typing, not one giant essay.
         async def _respond(text: str, file=None):
-            if file is None:
-                await message.channel.send(content=text)
-            else:
-                await message.channel.send(content=text, file=file)
+            bubbles = self._split_bubbles(text)
+            last_idx = len(bubbles) - 1
+            for i, bubble in enumerate(bubbles):
+                send_file = file if (file is not None and i == last_idx) else None
+                if send_file is not None:
+                    await message.channel.send(content=bubble, file=send_file)
+                else:
+                    await message.channel.send(content=bubble)
+                # Typing pause between bubbles (typing indicator stays on
+                # because we're still inside the `async with typing()` block)
+                if i != last_idx:
+                    await asyncio.sleep(random.uniform(0.8, 2.0))
 
         if not is_mention and not is_reply_to_bot:
             # Called by name anywhere in the message — always answer

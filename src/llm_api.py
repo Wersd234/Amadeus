@@ -55,6 +55,41 @@ def _extract_json(text: str) -> dict | None:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Reply Sanitising
+# ═══════════════════════════════════════════════════════════════════
+
+# Strip common chain-of-thought / thinking wrappers that models leak
+# (DeepSeek <|channel>thought, generic <thinking>…</thinking>, etc.).
+_COT_PATTERNS = [
+    (r"<\|channel>thought.*?(?=\n\n|\Z)", "", re.DOTALL),
+    (r"<\|assistant>thought.*?(?=\n\n|\Z)", "", re.DOTALL),
+    (r"<\|user>thought.*?(?=\n\n|\Z)", "", re.DOTALL),
+    (r"<thinking>.*?</thinking>", "", re.DOTALL),
+    (r"<reasoning>.*?</reasoning>", "", re.DOTALL),
+    (r"\[thinking\].*?\[/thinking\]", "", re.DOTALL),
+]
+
+
+def clean_reply_text(text: str) -> str:
+    """
+    Remove leaked chain-of-thought / inner-monologue from a reply
+    before it is sent to the channel.
+
+    A real group member never posts their internal OS, so anything the
+    model "thinks" must not appear in the bubble text. Also trims stray
+    JSON braces the model may have leaked around the reply.
+    """
+    if not text:
+        return text
+    cleaned = text
+    for pat, repl, *flags in _COT_PATTERNS:
+        cleaned = re.sub(pat, repl, cleaned, flags=flags[0] if flags else 0)
+    # Drop any dangling thinking markers / stray JSON tokens
+    cleaned = cleaned.replace("</thinking>", "").replace("[think]", "")
+    return cleaned.strip()
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Core Chat Call
 # ═══════════════════════════════════════════════════════════════════
 
@@ -171,10 +206,12 @@ async def generate_reply(messages: list[dict]) -> dict | None:
 
     parsed = _extract_json(raw.strip())
     if parsed is not None:
+        if isinstance(parsed.get("reply"), str):
+            parsed["reply"] = clean_reply_text(parsed["reply"])
         return parsed
 
     # Model didn't output JSON — use the raw text as the reply
-    return {"emotion": "other", "reply": raw.strip()}
+    return {"emotion": "other", "reply": clean_reply_text(raw.strip())}
 
 
 async def summarize_memory(current_memory: str, history: list[dict], lang: str) -> str:

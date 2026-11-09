@@ -70,6 +70,38 @@ _COT_PATTERNS = [
 ]
 
 
+def _strip_fw_narration(text: str) -> str:
+    """
+    Strip inner-monologue that models wrap in full-width parentheses
+    （...） or frame with orphan full-width close-parens （）lines like:
+        ）这个称呼真是够了……
+        ）
+        （刚在整理实验数据……
+        反正也是熟人了……
+        ）
+    A real group member never posts their internal OS, so all of this
+    must be dropped, keeping only the actual spoken line.
+    """
+    # 1. Remove whole （…） blocks, including multi-line ones.
+    text = re.sub(r"（[^（]*?）", "", text, flags=re.DOTALL)
+    # 2. Line-by-line: drop pure-paren lines and lines that open with ）.
+    kept = []
+    for line in text.split("\n"):
+        s = line.strip()
+        if not s:
+            continue
+        if re.fullmatch(r"[（）]+", s):
+            continue
+        if s.startswith("）"):
+            continue
+        kept.append(s)
+    cleaned = "\n".join(kept)
+    # 3. Clean any residue: nested paren blocks, orphan parens on edges.
+    cleaned = re.sub(r"（[^（]*?）", "", cleaned)
+    cleaned = cleaned.lstrip("（） ").rstrip("（） ")
+    return cleaned.strip()
+
+
 def clean_reply_text(text: str) -> str:
     """
     Remove leaked chain-of-thought / inner-monologue from a reply
@@ -86,6 +118,8 @@ def clean_reply_text(text: str) -> str:
         cleaned = re.sub(pat, repl, cleaned, flags=flags[0] if flags else 0)
     # Drop any dangling thinking markers / stray JSON tokens
     cleaned = cleaned.replace("</thinking>", "").replace("[think]", "")
+    # Full-width-paren narration (Chinese model leak style)
+    cleaned = _strip_fw_narration(cleaned)
     return cleaned.strip()
 
 

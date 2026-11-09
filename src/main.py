@@ -287,6 +287,50 @@ class AmadeusBot(discord.Client):
             parts.append(build_channel_slip_note(lang))
         return "\n".join(parts)
 
+    # ── Speaker identity helpers ────────────────────────────────
+    # Root-cause fix for "bot mistakes 群友A and 群友B for the same
+    # person": the per-channel history used to store user messages with
+    # no author info, so the LLM saw a flat user/assistant transcript
+    # and assumed every user message came from the current speaker.
+    # These helpers label every user message with its author's display
+    # name so group-membership survives regardless of backend.
+
+    @staticmethod
+    def _label_content(content, name: str):
+        """Prefix a speaker label to a user message.
+        Handles both plain text and multimodal (list) content."""
+        if isinstance(content, list):
+            # Multimodal — prepend a labelled text part before the image
+            parts = list(content)
+            parts.insert(0, {"type": "text", "text": f"{name}: "})
+            return parts
+        return f"{name}: {content}" if name else content
+
+    def _history_as_messages(self, channel_id: str, current_name: str) -> list[dict]:
+        """Render per-channel history with explicit speaker labels."""
+        out = []
+        for entry in self.history[channel_id]:
+            if entry.get("role") == "user":
+                name = entry.get("name") or current_name
+                content = entry.get("content", "")
+                out.append({"role": "user", "content": self._label_content(content, name)})
+            else:
+                out.append({"role": "assistant", "content": entry.get("content", "")})
+        return out
+
+    def _build_roster(self, channel_id: str, current_name: str) -> str:
+        """Distinct speaker names seen in this channel (history + recent)."""
+        seen = [current_name]
+        for entry in self.history[channel_id]:
+            nm = entry.get("name")
+            if nm and nm not in seen:
+                seen.append(nm)
+        for m in self.recent_messages.get(channel_id, []):
+            a = m.get("author")
+            if a and a not in seen:
+                seen.append(a)
+        return ", ".join(seen)
+
     async def _summarise_memory(self, channel_id: str, history_copy: list, lang: str):
         current = load_memory(channel_id)
         new_mem = await summarize_memory(current, history_copy, lang)
@@ -331,19 +375,13 @@ class AmadeusBot(discord.Client):
         now_ts = datetime.datetime.now().timestamp()
 
         # ── Reply style ──────────────────────────────────────────
-        # Unless the bot was @-mentioned, respond as a plain message
-        # instead of a Discord "reply" — no reply reference/mention.
+        # Always reply as a plain message — no Discord reply reference
+        # and no @-mention, so replies read like a normal group member.
         async def _respond(text: str, file=None):
-            if is_mention:
-                if file is None:
-                    await message.reply(content=text)
-                else:
-                    await message.reply(content=text, file=file)
+            if file is None:
+                await message.channel.send(content=text)
             else:
-                if file is None:
-                    await message.channel.send(content=text)
-                else:
-                    await message.channel.send(content=text, file=file)
+                await message.channel.send(content=text, file=file)
 
         if not is_mention and not is_reply_to_bot:
             # Called by name anywhere in the message — always answer
@@ -468,6 +506,22 @@ class AmadeusBot(discord.Client):
             if injects:
                 extra = extra + "\n" + injects if extra else injects
 
+            # ── Group roster (identity disambiguation) ──────────
+            # Tell the model who the distinct group members are, so it
+            # never fuses 群友A and 群友B into one persona.
+            roster = self._build_roster(channel_id, message.author.display_name)
+            if lang == "zh":
+                roster_note = (
+                    f"\n[在场群友]\n这个频道里出现过的不同群友昵称: {roster}\n"
+                    f"他们是不一样的人，绝不混为一谈；对谁说话就针对谁。"
+                )
+            else:
+                roster_note = (
+                    f"\n[Group Members]\nDistinct group-member names seen here: {roster}\n"
+                    f"They are different people — never conflate them; address each on their own."
+                )
+            extra = extra + "\n" + roster_note if extra else roster_note
+
             system_prompt = build_system_prompt(
                 lang=lang, worldline_mode=wl["mode"],
                 worldline_value=wl["value_str"],
@@ -478,9 +532,13 @@ class AmadeusBot(discord.Client):
 
             # ── LLM call ─────────────────────────────────────────
             messages = [{"role": "system", "content": system_prompt}]
-            for entry in self.history[channel_id]:
-                messages.append(entry)
-            messages.append({"role": "user", "content": user_msg_content})
+            # History with explicit speaker labels (fixes user conflating)
+            messages.extend(self._history_as_messages(channel_id, message.author.display_name))
+            # Label the current message with its speaker too
+            messages.append({
+                "role": "user",
+                "content": self._label_content(user_msg_content, message.author.display_name),
+            })
 
             llm_resp = await generate_reply(messages)
 
@@ -543,6 +601,7 @@ class AmadeusBot(discord.Client):
             self.history[channel_id].append({
                 "role": "user",
                 "content": user_text if user_text else "[sent an image]",
+                "name": message.author.display_name,
             })
             self.history[channel_id].append({
                 "role": "assistant", "content": reply_text,

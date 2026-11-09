@@ -186,25 +186,33 @@ async def summarize_memory(current_memory: str, history: list[dict], lang: str) 
     """
     if lang == "zh":
         instruction = (
-            "请提取以下对话中关于用户的关键事实（例如：用户的昵称、喜好、作息、说过的重要事情等）。"
+            "请提取以下对话中关于各个用户的关键事实（例如：用户的昵称、喜好、作息、说过的重要事情等）。"
+            "每条事实必须注明是属于哪个用户（按昵称区分，不同昵称是不同的用户，不要合并）。"
             "将新事实与[现有记忆]合并，写成一段简短的客观总结。不要输出任何废话、主观感受、"
             "思考过程或对话格式，只输出事实本身。"
         )
     else:
         instruction = (
-            "Extract key facts about the user from the conversation below. "
+            "Extract key facts about EACH user from the conversation below "
+            "(nickname, preferences, schedule, important things they said). "
+            "Attribute every fact to the correct user by their nickname — different "
+            "nicknames are different people, never merge them. "
             "Merge new facts with [Existing Memory] into a single concise paragraph "
             "of objective facts. Output only the facts — no thought process, "
             "commentary, or conversational filler."
         )
 
-    # Serialise the history into plain text
+    # Serialise the history into plain text (with speaker identity)
     chat_text = ""
     for msg in history:
         content = msg["content"]
         if isinstance(content, list):
             content = "[sent an image]"
-        chat_text += f"{msg['role']}: {content}\n"
+        name = msg.get("name", "")
+        if name:
+            chat_text += f"用户 {name}: {content}\n"
+        else:
+            chat_text += f"{msg['role']}: {content}\n"
 
     prompt = (
         f"{instruction}\n\n"
